@@ -60,7 +60,9 @@ func newPinDialer(s StorageReader, r PinFailureReporter, pinOnly bool, defaultTL
 
 		if h := s.Lookup(host); h != nil {
 			// initial dial
-			c, err := tls.Dial(network, addr, &tls.Config{InsecureSkipVerify: pinOnly})
+			tlsConfigCopy := *defaultTLSConfig
+			tlsConfigCopy.InsecureSkipVerify = pinOnly
+			c, err := tls.Dial(network, addr, &tlsConfigCopy)
 			if err != nil {
 				return c, err
 			}
