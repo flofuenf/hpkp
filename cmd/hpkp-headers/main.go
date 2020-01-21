@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/tam7t/hpkp"
+	"github.com/ferlonas/hpkp"
 )
 
 func main() {

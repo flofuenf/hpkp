@@ -5,7 +5,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/tam7t/hpkp"
+	"github.com/ferlonas/hpkp"
 )
 
 func Example() {

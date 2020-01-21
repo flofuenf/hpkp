@@ -9,7 +9,9 @@ import (
 	"io/ioutil"
 	"log"
 
-	"github.com/tam7t/hpkp"
+	"golang.org/x/crypto/pkcs12"
+
+	"github.com/ferlonas/hpkp"
 )
 
 func main() {
@@ -17,6 +19,8 @@ func main() {
 
 	serverPtr := flag.String("server", "", "server to inspect (ex: github.com:443)")
 	filePtr := flag.String("file", "", "path to PEM encoded certificate")
+	clientP12 := flag.String("client-cert", "", "path to PKCS12 encoded client certificate (only for server inspection)")
+	clientKey := flag.String("client-key", "", "key required for PKCS12 client certificate (only if required")
 
 	flag.Parse()
 
@@ -29,7 +33,7 @@ func main() {
 	}
 
 	if *serverPtr != "" {
-		err = fromServer(*serverPtr)
+		err = fromServer(*serverPtr, *clientP12, *clientKey)
 	}
 
 	if err != nil {
@@ -37,17 +41,31 @@ func main() {
 	}
 }
 
-func fromServer(server string) error {
-	conn, err := tls.Dial("tcp", server, &tls.Config{
+func fromServer(server, cCertPath, cCertKey string) error {
+	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
-	})
+	}
+	if cCertPath != "" {
+		cert, err := loadPKCS12(cCertPath, cCertKey)
+		if err != nil {
+			log.Fatal(err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{
+			*cert,
+		}
+	}
+	conn, err := tls.Dial("tcp", server, tlsConfig)
 
 	if err != nil {
 		return err
 	}
 
 	for _, cert := range conn.ConnectionState().PeerCertificates {
-		fmt.Println(hpkp.Fingerprint(cert))
+		fmt.Printf("%s", hpkp.Fingerprint(cert))
+		if cert.IsCA {
+			fmt.Printf(" (CA)")
+		}
+		fmt.Println()
 	}
 
 	return nil
@@ -71,8 +89,36 @@ func fromFile(path string) error {
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Println(hpkp.Fingerprint(cert))
+		fmt.Printf("%s", hpkp.Fingerprint(cert))
+		if cert.IsCA {
+			fmt.Printf(" (CA)")
+		}
+		fmt.Println()
 	}
 
 	return nil
+}
+
+func loadPKCS12(path, key string) (*tls.Certificate, error) {
+	bytes, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read %q: %v", path, err)
+	}
+
+	blocks, err := pkcs12.ToPEM(bytes, key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode: %v", err)
+	}
+
+	var pemData []byte
+	for _, b := range blocks {
+		pemData = append(pemData, pem.EncodeToMemory(b)...)
+	}
+
+	cert, err := tls.X509KeyPair(pemData, pemData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create X509KeyPair: %v", err)
+	}
+
+	return &cert, nil
 }
