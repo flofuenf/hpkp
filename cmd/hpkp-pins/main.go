@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
+	"os"
 
 	"golang.org/x/crypto/pkcs12"
 
@@ -42,6 +43,7 @@ func main() {
 }
 
 func fromServer(server, cCertPath, cCertKey string) error {
+	ctx := context.Background()
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
@@ -54,7 +56,13 @@ func fromServer(server, cCertPath, cCertKey string) error {
 			*cert,
 		}
 	}
-	conn, err := tls.Dial("tcp", server, tlsConfig)
+
+	c, err := (&tls.Dialer{Config: tlsConfig}).DialContext(ctx, "tcp", server)
+	if err != nil {
+		return err
+	}
+	// do a normal dial, address isn't in hpkp cache
+	conn := tls.Client(c, tlsConfig)
 
 	if err != nil {
 		return err
@@ -72,7 +80,7 @@ func fromServer(server, cCertPath, cCertKey string) error {
 }
 
 func fromFile(path string) error {
-	contents, err := ioutil.ReadFile(path)
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -100,7 +108,7 @@ func fromFile(path string) error {
 }
 
 func loadPKCS12(path, key string) (*tls.Certificate, error) {
-	bytes, err := ioutil.ReadFile(path)
+	bytes, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %q: %v", path, err)
 	}

@@ -35,7 +35,7 @@ func Example() {
 		},
 	}
 	client.Transport = &http.Transport{
-		DialTLS: dialConf.NewDialer(),
+		DialTLSContext: dialConf.NewDialer(),
 	}
 
 	resp, err := client.Get("https://github.com")

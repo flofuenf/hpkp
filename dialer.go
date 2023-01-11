@@ -1,6 +1,7 @@
 package hpkp
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"net"
@@ -31,10 +32,14 @@ type DialerConfig struct {
 }
 
 // NewDialer returns a dialer for making TLS connections with hpkp support
-func (c *DialerConfig) NewDialer() func(network, addr string) (net.Conn, error) {
+func (c *DialerConfig) NewDialer() func(ctx context.Context, network, addr string) (net.Conn, error) {
 	reporter := c.Reporter
 	if reporter == nil {
 		reporter = emptyReporter
+	}
+
+	if c.TLSConfig == nil {
+		c.TLSConfig = &tls.Config{}
 	}
 
 	return newPinDialer(c.Storage, reporter, c.PinOnly, c.TLSConfig)
@@ -46,8 +51,8 @@ var emptyReporter = func(p *PinFailure, reportUri string) {
 }
 
 // newPinDialer returns a function suitable for use as DialTLS
-func newPinDialer(s StorageReader, r PinFailureReporter, pinOnly bool, defaultTLSConfig *tls.Config) func(network, addr string) (net.Conn, error) {
-	return func(network, addr string) (net.Conn, error) {
+func newPinDialer(s StorageReader, r PinFailureReporter, pinOnly bool, defaultTLSConfig *tls.Config) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, portStr, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, err
@@ -60,17 +65,18 @@ func newPinDialer(s StorageReader, r PinFailureReporter, pinOnly bool, defaultTL
 
 		if h := s.Lookup(host); h != nil {
 			// initial dial
-			tlsConfigCopy := *defaultTLSConfig
-			tlsConfigCopy.InsecureSkipVerify = pinOnly
-			c, err := tls.Dial(network, addr, &tlsConfigCopy)
+			defaultTLSConfig.InsecureSkipVerify = pinOnly
+			c, err := (&tls.Dialer{Config: defaultTLSConfig}).DialContext(ctx, network, addr)
 			if err != nil {
 				return c, err
 			}
 
+			client := tls.Client(c, defaultTLSConfig)
+
 			// intermediates can be pinned as well, loop through leaf-> root looking
 			// for pin matches
 			validPin := false
-			for _, peercert := range c.ConnectionState().PeerCertificates {
+			for _, peercert := range client.ConnectionState().PeerCertificates {
 				peerPin := Fingerprint(peercert)
 				if h.Matches(peerPin) {
 					validPin = true
@@ -80,13 +86,17 @@ func newPinDialer(s StorageReader, r PinFailureReporter, pinOnly bool, defaultTL
 			// was a valid pin found?
 			if !validPin {
 				// notify failure callback
-				r(NewPinFailure(host, port, h, c.ConnectionState()))
+				r(NewPinFailure(host, port, h, client.ConnectionState()))
 				return nil, errors.New("pin was not valid")
 			}
 			return c, nil
 		}
 
+		c, err := (&tls.Dialer{Config: defaultTLSConfig}).DialContext(ctx, network, addr)
+		if err != nil {
+			return c, err
+		}
 		// do a normal dial, address isn't in hpkp cache
-		return tls.Dial(network, addr, defaultTLSConfig)
+		return tls.Client(c, defaultTLSConfig), nil
 	}
 }
